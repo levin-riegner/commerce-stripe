@@ -12,6 +12,8 @@ use craft\commerce\Plugin as Commerce;
 use craft\commerce\stripe\gateways\Gateway;
 use craft\commerce\stripe\Plugin as StripePlugin;
 use craft\commerce\stripe\errors\CustomerException;
+use craft\commerce\stripe\events\CreateCustomerEvent;
+use craft\commerce\stripe\events\UpdateCustomerEvent;
 use craft\commerce\stripe\models\Customer;
 use craft\commerce\stripe\records\Customer as CustomerRecord;
 use craft\db\Query;
@@ -29,6 +31,49 @@ use yii\base\Exception;
  */
 class Customers extends Component
 {
+    // Constants
+    // =========================================================================
+
+    /**
+     * @event CreateUserEvent The event that is triggered before a user is created on stripe
+     *
+     * Plugins can get notified whenever a new user is going to be created in stripe, and add custom fields to it
+     *
+     * ```php
+     * use craft\commerce\stripe\events\CreateCustomerEvent;
+     * use craft\commerce\stripe\services\Customers;
+     * use yii\base\Event;
+     *
+     * Event::on(Customers::class, Customers::EVENT_BEFORE_CREATE_CUSTOMER, function(CreateUserEvent $e) {
+     *     $customerData = $e->customerData;
+     *     // Do something with the data...
+     * });
+     * ```
+     */
+    const EVENT_BEFORE_CREATE_CUSTOMER = 'beforeCreateCustomer';
+
+    /**
+     * @event UpdateUserEvent The event that is triggered before a user is update on stripe
+     *
+     * Plugins can get notified whenever a new user is going to be updated in stripe, and add custom fields to it
+     *
+     * ```php
+     * use craft\commerce\stripe\events\UpdateCustomerEvent;
+     * use craft\commerce\stripe\services\Customers;
+     * use yii\base\Event;
+     *
+     * Event::on(Customers::class, Customers::EVENT_BEFORE_UPDATE_CUSTOMER, function(UpdateCustomerEvent $e) {
+     *     // Review current customer information
+     *     $customer = $e->customer;
+     *     // Do something with the data...
+     *     $updatedData = $e->updatedData;
+     *     // Triger the update
+     *     $e->isValid = true;
+     * });
+     * ```
+     */
+    const EVENT_BEFORE_UPDATE_CUSTOMER = 'beforeUpdateCustomer';
+
     // Public Methods
     // =========================================================================
 
@@ -43,30 +88,57 @@ class Customers extends Component
      */
     public function getCustomer(int $gatewayId, User $user): Customer
     {
-        $result = $this->_createCustomerQuery()
-            ->where(['userId' => $user->id, 'gatewayId' => $gatewayId])
-            ->one();
-
-        if ($result !== null) {
-            return new Customer($result);
-        }
-
         Stripe::setApiKey(Craft::parseEnv(Commerce::getInstance()->getGateways()->getGatewayById($gatewayId)->apiKey));
         Stripe::setAppInfo(StripePlugin::getInstance()->name, StripePlugin::getInstance()->version, StripePlugin::getInstance()->documentationUrl);
         Stripe::setApiVersion(Gateway::STRIPE_API_VERSION);
 
-        /** @var StripeCustomer $stripeCustomer */
-        $stripeCustomer = StripeCustomer::create([
-            'description' => Craft::t('commerce-stripe', 'Customer for Craft user with ID {id}', ['id' => $user->id]),
-            'email' => $user->email
-        ]);
+        $result = $this->_createCustomerQuery()
+            ->where(['userId' => $user->id, 'gatewayId' => $gatewayId])
+            ->one();
 
-        $customer = new Customer([
-            'userId' => $user->id,
-            'gatewayId' => $gatewayId,
-            'reference' => $stripeCustomer->id,
-            'response' => $stripeCustomer->jsonSerialize()
-        ]);
+        $customer = null;
+
+        if ($result !== null) {
+            $customer = new Customer($result);
+
+            $event = new UpdateCustomerEvent(['customer' => $customer]);
+
+            if ($this->hasEventHandlers(self::EVENT_BEFORE_UPDATE_CUSTOMER)) {
+                $this->trigger(self::EVENT_BEFORE_UPDATE_CUSTOMER, $event);
+            }
+
+            //Asume no changes need to be made to the current user if !isValid
+            if (!$event->isValid) {
+                return $customer;
+            }
+
+            $stripeCustomer = StripeCustomer::update($result['reference'], $event->updatedData);
+
+            $customer->response = $stripeCustomer->jsonSerialize();
+
+        }else{
+    
+            $event = new CreateCustomerEvent([
+                'customerData' => [
+                    'description' => Craft::t('commerce-stripe', 'Customer for Craft user with ID {id}', ['id' => $user->id]),
+                    'email' => $user->email
+                ]
+            ]);
+    
+            if ($this->hasEventHandlers(self::EVENT_BEFORE_CREATE_CUSTOMER)) {
+                $this->trigger(self::EVENT_BEFORE_CREATE_CUSTOMER, $event);
+            }
+    
+            /** @var StripeCustomer $stripeCustomer */
+            $stripeCustomer = StripeCustomer::create($event->customerData);
+    
+            $customer = new Customer([
+                'userId' => $user->id,
+                'gatewayId' => $gatewayId,
+                'reference' => $stripeCustomer->id,
+                'response' => $stripeCustomer->jsonSerialize()
+            ]); 
+        }
 
         if (!$this->saveCustomer($customer)) {
             throw new CustomerException('Could not save customer: ' . implode(', ', $customer->getErrorSummary(true)));
@@ -139,7 +211,7 @@ class Customers extends Component
         $record->response = $customer->response;
 
         $customer->validate();
-
+        
         if (!$customer->hasErrors()) {
             // Save it!
             $record->save(false);
