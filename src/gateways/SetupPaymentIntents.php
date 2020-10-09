@@ -38,7 +38,8 @@ class SetupPaymentIntents extends PaymentIntents
         unset($setupIntent['client_secret']);
 
         $paymentSource = [];
-        if($setupIntent->status == "confirmed")
+        //No further validation needed, we can save it in craft now
+        if($setupIntent->status == "succeeded")
             $paymentSource = Plugin::getInstance()->getPaymentSources()->createPaymentSource($userId, $this, $paymentForm);
 
         return [
