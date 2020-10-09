@@ -20,14 +20,15 @@ use Stripe\SetupIntent;
  **/
 class SetupPaymentIntents extends PaymentIntents
 {
-    public function createSetupIntent($userId, $pmToken){
+    public function createSetupIntent($userId, $pmToken, $return_url){
         
         $stripeCustomer = $this->getStripeCustomer($userId);
 
         $setupIntent = SetupIntent::create([
             'customer' => $stripeCustomer->id,
             'payment_method' => $pmToken,
-            'confirm' => true
+            'confirm' => true,
+            'return_url' => $return_url
         ]);
 
         $paymentForm = new PaymentIntent();
@@ -35,6 +36,22 @@ class SetupPaymentIntents extends PaymentIntents
         
         //Remove sensitive information
         unset($setupIntent['client_secret']);
+
+        $paymentSource = [];
+        if($setupIntent->status == "confirmed")
+            $paymentSource = Plugin::getInstance()->getPaymentSources()->createPaymentSource($userId, $this, $paymentForm);
+
+        return [
+            'setupIntent' => $setupIntent, 
+            'paymentSource' => $paymentSource
+        ];
+    }
+
+    public function saveSetupIntent($userId, $setupIntent){
+        $setupIntent = SetupIntent::retrieve($setupIntent);
+
+        $paymentForm = new PaymentIntent();
+        $paymentForm['paymentMethodId'] = $setupIntent->payment_method;
 
         $paymentSource = Plugin::getInstance()->getPaymentSources()->createPaymentSource($userId, $this, $paymentForm);
 
