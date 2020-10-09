@@ -8,10 +8,9 @@
 namespace craft\commerce\stripe\gateways;
 
 use Craft;
-use craft\commerce\models\payments\CreditCardPaymentForm;
-use craft\commerce\stripe\Plugin;
+use craft\commerce\Plugin;
+use craft\commerce\stripe\models\forms\payment\PaymentIntent;
 use Stripe\SetupIntent;
-use Stripe\PaymentMethod;
 
 /**
  * This class represents the Stripe Payment Intents gateway
@@ -31,14 +30,17 @@ class SetupPaymentIntents extends PaymentIntents
             'confirm' => true
         ]);
 
-        $paymentForm = new CreditCardPaymentForm();
-        $paymentForm->paymentMethodId = $pmToken;
+        $paymentForm = new PaymentIntent();
+        $paymentForm['paymentMethodId'] = $pmToken;
         
         //Remove sensitive information
         unset($setupIntent['client_secret']);
 
-        Plugin::getInstance()->getPaymentSources()->createPaymentSource($userId, $this, $paymentForm);
+        $paymentSource = Plugin::getInstance()->getPaymentSources()->createPaymentSource($userId, $this, $paymentForm);
 
-        return $setupIntent;
+        return [
+            'setupIntent' => $setupIntent, 
+            'paymentSource' => $paymentSource
+        ];
     }
 }

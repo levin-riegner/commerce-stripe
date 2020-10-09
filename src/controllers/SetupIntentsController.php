@@ -48,10 +48,18 @@ class SetupIntentsController extends BaseController
             if (!$gateway || !$gateway instanceof SetupPaymentIntents) {
                 throw new BadRequestHttpException('That is not a valid gateway id.');
             }
-
-            return $this->asJson($gateway->createSetupIntent(Craft::$app->getUser()->id, $paymentMethodId));
+            $setupIntent = $gateway->createSetupIntent(Craft::$app->getUser()->id, $paymentMethodId);
+            if ($request->getAcceptsJson())
+                return $this->asJson($setupIntent);
+            else
+                return $this->redirectToPostedUrl();
         } catch (\Throwable $e) {
-            return $this->asErrorJson($e->getMessage());
+            if ($request->getAcceptsJson())
+                return $this->asErrorJson($e->getMessage());
+            
+            Craft::$app->getUrlManager()->setRouteParams(['error' => $e->getMessage()]);
+
+            return null;
         }
     }
 }
