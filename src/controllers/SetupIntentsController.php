@@ -64,7 +64,6 @@ class SetupIntentsController extends BaseController
             return $this->redirectToPostedUrl();
 
         } catch (\Throwable $e) {
-            Craft::dd($e);
             if ($request->getAcceptsJson())
                 return $this->asErrorJson($e->getMessage());
             
